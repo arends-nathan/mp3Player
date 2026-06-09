@@ -1,0 +1,3 @@
+[submodule "tools/spotify-sync"]
+	path = tools/spotify-sync
+	url = https://github.com/arends-nathan/MP3SpotifySync
