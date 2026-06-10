@@ -1,0 +1,32 @@
+services:
+  mp3-sync:
+    build: .
+    container_name: mp3-sync
+    env_file:
+      - .env
+    environment:
+      OUTPUT_DIR: /app/sync_folder
+      FFMPEG_LOCATION: /usr/bin/ffmpeg
+      SPOTIFY_REDIRECT_URI: http://127.0.0.1:8888/callback
+      SPOTIFY_TOKEN_CACHE_PATH: /app/.spotify_token_cache/token_cache.json
+    volumes:
+      - ./sync_folder:/app/sync_folder
+      - spotify-token-cache:/app/.spotify_token_cache
+    restart: unless-stopped
+
+  mp3-api:
+    build: .
+    container_name: mp3-api
+    command: ["python", "api.py"]
+    environment:
+      OUTPUT_DIR: /app/sync_folder
+      SYNC_API_HOST: 0.0.0.0
+      SYNC_API_PORT: 8000
+    volumes:
+      - ./sync_folder:/app/sync_folder:ro
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  spotify-token-cache:

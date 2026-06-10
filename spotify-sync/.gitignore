@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env/
+.env
+build/
+dist/
+*.egg-info/
+
+# Local app config and tokens
+config.json
+.spotify_token_cache
+
+# Generated audio and sync outputs
+sync_folder/
+*.mp3
+*.m4a
+*.webm
+*.part
+
+# Editor / OS noise
+.vscode/
+Thumbs.db
+.DS_Store

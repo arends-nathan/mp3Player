@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mp3playerproject"
+version = "0.1.0"
+description = "Spotify-driven MP3 sync backend for an embedded player"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "spotipy",
+  "yt-dlp",
+]
+
+[project.scripts]
+mp3-sync = "main:main"
+mp3-api = "api:main"
+
+[tool.setuptools]
+py-modules = ["main", "config", "spotify_service", "curator", "downloader", "api"]
