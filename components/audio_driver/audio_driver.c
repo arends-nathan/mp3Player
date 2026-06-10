@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "freertos/stream_buffer.h"
 
 #include "esp_log.h"
 #include "driver/i2s_std.h"
@@ -38,6 +39,11 @@ static const char *TAG = "AUDIO_DRIVER";
 #define MP3_MAX_SAMPLES_PER_CH  1152               // Helix max for layer III
 #define PCM_OUTPUT_BUFFER_SIZE  (MP3_MAX_SAMPLES_PER_CH * 2) // stereo interleaved shorts
 
+// Bluetooth A2DP hand-off buffer. Holds decoded PCM (16-bit stereo) waiting to
+// be pulled by the A2DP source callback. ~16 KB is roughly 90 ms of 44.1 kHz
+// stereo audio, enough to absorb decode/Bluetooth scheduling jitter.
+#define BT_PCM_STREAM_BUFFER_SIZE  (16 * 1024)
+
 // Player command messages delivered to the audio task.
 typedef enum {
     CMD_PLAY,
@@ -61,6 +67,11 @@ static volatile bool s_pause_requested = false;
 static volatile bool s_stop_requested  = false;
 static volatile uint8_t s_volume = 70;    // 0-100, default to a safe listening level
 static uint32_t s_current_sample_rate = 44100;
+
+// PCM routing. Default to the local I2S amplifier; switched to BT by the
+// Bluetooth A2DP source while a sink is connected.
+static volatile audio_output_t s_output = AUDIO_OUTPUT_I2S;
+static StreamBufferHandle_t s_bt_stream = NULL;
 
 static audio_status_t s_status = {
     .state = AUDIO_STATE_IDLE,
@@ -278,9 +289,24 @@ static void play_file(const char *filepath) {
 
         apply_volume(pcm_buf, sample_count, s_volume);
 
-        size_t bytes_written = 0;
-        i2s_channel_write(s_tx_chan, pcm_buf, sample_count * sizeof(int16_t),
-                          &bytes_written, portMAX_DELAY);
+        const size_t pcm_bytes = sample_count * sizeof(int16_t);
+        if (s_output == AUDIO_OUTPUT_BT) {
+            // Feed the Bluetooth A2DP source. xStreamBufferSend blocks until
+            // space is available, which naturally paces decoding to the sink's
+            // consumption rate (the A2DP timeline replaces the I2S clock).
+            const uint8_t *p = (const uint8_t *)pcm_buf;
+            size_t remaining = pcm_bytes;
+            while (remaining > 0 && !s_stop_requested) {
+                size_t sent = xStreamBufferSend(s_bt_stream, p, remaining,
+                                                pdMS_TO_TICKS(100));
+                p += sent;
+                remaining -= sent;
+            }
+        } else {
+            size_t bytes_written = 0;
+            i2s_channel_write(s_tx_chan, pcm_buf, pcm_bytes,
+                              &bytes_written, portMAX_DELAY);
+        }
 
         // Track elapsed time from the number of per-channel samples emitted.
         total_samples_played += (uint64_t)(sample_count / 2);
@@ -334,6 +360,11 @@ esp_err_t audio_driver_init(void) {
     s_status_mutex = xSemaphoreCreateMutex();
     s_cmd_queue = xQueueCreate(4, sizeof(audio_cmd_t));
     if (!s_status_mutex || !s_cmd_queue) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_bt_stream = xStreamBufferCreate(BT_PCM_STREAM_BUFFER_SIZE, 1);
+    if (!s_bt_stream) {
         return ESP_ERR_NO_MEM;
     }
 
@@ -437,4 +468,37 @@ void audio_player_get_status(audio_status_t *out) {
         *out = s_status;
         xSemaphoreGive(s_status_mutex);
     }
+}
+
+void audio_driver_set_output(audio_output_t output) {
+    if (output == s_output) {
+        return;
+    }
+    s_output = output;
+    if (s_bt_stream) {
+        // Drop stale samples so the new sink starts clean.
+        xStreamBufferReset(s_bt_stream);
+    }
+    ESP_LOGI(TAG, "Audio output -> %s", output == AUDIO_OUTPUT_BT ? "Bluetooth" : "I2S");
+}
+
+audio_output_t audio_driver_get_output(void) {
+    return s_output;
+}
+
+int audio_driver_read_pcm(uint8_t *buf, int len) {
+    if (!buf || len <= 0) {
+        return 0;
+    }
+    int received = 0;
+    if (s_bt_stream) {
+        received = (int)xStreamBufferReceive(s_bt_stream, buf, (size_t)len,
+                                             pdMS_TO_TICKS(20));
+    }
+    // The A2DP source contract expects a full buffer every time; zero-pad any
+    // underrun so the stream stays silent rather than glitching.
+    if (received < len) {
+        memset(buf + received, 0, (size_t)(len - received));
+    }
+    return len;
 }

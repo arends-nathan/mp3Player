@@ -1,6 +1,7 @@
 # Name,   Type, SubType, Offset,  Size,    Flags
 # Music lives on an external SPI SD card (FAT), so no SPIFFS data partition is
-# needed here. The app partition is enlarged for the MP3 decoder + WiFi stack.
+# needed here. The app partition is enlarged for the MP3 decoder + WiFi + BT
+# stacks (Bluedroid classic is large). Requires a 4 MB flash module.
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 2M,
+factory,  app,  factory, 0x10000, 3M,

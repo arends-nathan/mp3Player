@@ -10,6 +10,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -108,6 +109,149 @@ esp_err_t wifi_manager_init(const char *ssid, const char *password) {
 
 bool wifi_manager_is_connected(void) {
     return s_wifi_connected;
+}
+
+// ---------------------------------------------------------------------------
+// Scanning, runtime (re)connect and credential persistence
+// ---------------------------------------------------------------------------
+#define WIFI_NVS_NAMESPACE "wifi"
+
+static int compare_rssi_desc(const void *a, const void *b) {
+    const wifi_ap_info_t *pa = (const wifi_ap_info_t *)a;
+    const wifi_ap_info_t *pb = (const wifi_ap_info_t *)b;
+    return pb->rssi - pa->rssi;
+}
+
+esp_err_t wifi_manager_scan(wifi_ap_info_t *out, int max, int *found) {
+    if (!out || max <= 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (found) {
+        *found = 0;
+    }
+
+    wifi_scan_config_t scan_cfg = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = false,
+    };
+
+    esp_err_t err = esp_wifi_scan_start(&scan_cfg, true); // blocking
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Scan start failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    uint16_t ap_num = 0;
+    esp_wifi_scan_get_ap_num(&ap_num);
+    if (ap_num == 0) {
+        return ESP_OK;
+    }
+
+    wifi_ap_record_t *records = calloc(ap_num, sizeof(wifi_ap_record_t));
+    if (!records) {
+        esp_wifi_clear_ap_list();
+        return ESP_ERR_NO_MEM;
+    }
+    esp_wifi_scan_get_ap_records(&ap_num, records);
+
+    int count = 0;
+    for (int i = 0; i < ap_num && count < max; i++) {
+        const char *ssid = (const char *)records[i].ssid;
+        if (ssid[0] == '\0') {
+            continue; // skip hidden networks
+        }
+
+        // De-duplicate by SSID, keeping the strongest signal.
+        int existing = -1;
+        for (int j = 0; j < count; j++) {
+            if (strncmp(out[j].ssid, ssid, WIFI_SSID_MAX_LEN) == 0) {
+                existing = j;
+                break;
+            }
+        }
+        if (existing >= 0) {
+            if (records[i].rssi > out[existing].rssi) {
+                out[existing].rssi = records[i].rssi;
+            }
+            continue;
+        }
+
+        strncpy(out[count].ssid, ssid, WIFI_SSID_MAX_LEN - 1);
+        out[count].ssid[WIFI_SSID_MAX_LEN - 1] = '\0';
+        out[count].rssi = records[i].rssi;
+        out[count].secure = (records[i].authmode != WIFI_AUTH_OPEN);
+        count++;
+    }
+
+    free(records);
+    qsort(out, count, sizeof(wifi_ap_info_t), compare_rssi_desc);
+
+    if (found) {
+        *found = count;
+    }
+    ESP_LOGI(TAG, "Scan complete: %d network(s)", count);
+    return ESP_OK;
+}
+
+esp_err_t wifi_manager_connect(const char *ssid, const char *password) {
+    if (!ssid || ssid[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    wifi_config_t wifi_config = { 0 };
+    strncpy((char *)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
+    if (password && password[0] != '\0') {
+        strncpy((char *)wifi_config.sta.password, password, sizeof(wifi_config.sta.password) - 1);
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    } else {
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    }
+
+    s_wifi_connected = false;
+    s_retry_count = 0;
+    if (s_wifi_event_group) {
+        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+    }
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    esp_wifi_disconnect();
+
+    ESP_LOGI(TAG, "Connecting to SSID: %s", ssid);
+    return esp_wifi_connect();
+}
+
+void wifi_creds_save(const char *ssid, const char *password) {
+    nvs_handle_t handle;
+    if (nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) {
+        ESP_LOGW(TAG, "Could not open NVS to save WiFi credentials");
+        return;
+    }
+    nvs_set_str(handle, "ssid", ssid ? ssid : "");
+    nvs_set_str(handle, "pass", password ? password : "");
+    nvs_commit(handle);
+    nvs_close(handle);
+    ESP_LOGI(TAG, "Saved WiFi credentials for SSID: %s", ssid ? ssid : "");
+}
+
+bool wifi_creds_load(char *ssid, size_t ssid_len, char *password, size_t pass_len) {
+    nvs_handle_t handle;
+    if (nvs_open(WIFI_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return false;
+    }
+    bool ok = false;
+    size_t sl = ssid_len;
+    if (nvs_get_str(handle, "ssid", ssid, &sl) == ESP_OK && ssid[0] != '\0') {
+        size_t pl = pass_len;
+        if (nvs_get_str(handle, "pass", password, &pl) != ESP_OK) {
+            password[0] = '\0';
+        }
+        ok = true;
+    }
+    nvs_close(handle);
+    return ok;
 }
 
 // ---------------------------------------------------------------------------

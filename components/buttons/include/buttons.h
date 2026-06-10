@@ -13,21 +13,25 @@ typedef enum {
     BTN_UP,
     BTN_DOWN,
     BTN_SELECT,
+    BTN_SELECT_LONG, /*!< Select held past the long-press threshold */
     BTN_BACK,
 } button_event_t;
 
 /**
- * @brief Configure the button GPIOs as inputs with internal pull-ups.
+ * @brief Install the GPIO interrupts and start the button service task.
  *
- * Must be called once during boot before ::buttons_poll.
+ * Buttons are edge-triggered: an ISR timestamps each transition and a small
+ * service task debounces it and classifies short vs. long presses. Must be
+ * called once during boot before ::buttons_poll.
  */
 void buttons_init(void);
 
 /**
- * @brief Sample the buttons and return the first newly-pressed one.
+ * @brief Return the next pending button event, or ::BTN_NONE if none.
  *
- * Uses release-to-press edge detection, which doubles as debounce when polled
- * at the UI frame rate. Returns ::BTN_NONE when nothing new was pressed.
+ * Non-blocking. Events are produced asynchronously by the interrupt-driven
+ * service task and buffered in a queue, so this never misses a press between
+ * calls.
  */
 button_event_t buttons_poll(void);
 

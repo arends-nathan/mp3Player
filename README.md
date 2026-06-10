@@ -39,32 +39,66 @@ is a thin composition root that wires them together.
 | [`audio_driver`](components/audio_driver/) | I2S output + Helix MP3 decoding. Runs its own playback task on **core 0**. |
 | [`music_library`](components/music_library/) | Mounts the SD card (FAT over SPI), scans for `.mp3` files, drives playback. |
 | [`sync_manager`](components/sync_manager/) | WiFi association + nightly manifest sync. Network task pinned to **core 0**. |
-| [`buttons`](components/buttons/) | GPIO input with edge-detection debounce. |
+| [`buttons`](components/buttons/) | Interrupt-driven GPIO input with debounce and long-press detection. |
 | [`ui`](components/ui/) | OLED rendering, menu state machine, and UI task on **core 1**. |
-| [`wifi_download`](components/wifi_download/) | Low-level WiFi station bring-up + HTTP download / manifest parsing. |
+| [`wifi_download`](components/wifi_download/) | WiFi station bring-up, scanning, HTTP download / manifest parsing, NVS credentials. |
+| [`bt_manager`](components/bt_manager/) | Bluetooth (Bluedroid classic) enable/disable, GAP device discovery, and A2DP audio source. |
 | [`u8g2`](components/u8g2/), [`u8g2-hal-esp-idf`](components/u8g2-hal-esp-idf/) | Display library + ESP-IDF HAL (git submodules). |
 
 ### Dual-core layout
 
 - **Core 0 (PRO_CPU):** audio decode task + WiFi/network task. The nightly sync
-  is idle-time only, so it never competes with playback.
+  is idle-time only, so it never competes with playback. Bluetooth is
+  automatically suspended during a sync (the radios share RAM and never need to
+  run together) and restored afterwards.
 - **Core 1 (APP_CPU):** UI rendering at ~30 FPS.
 
 ---
 
 ## Menu
 
-After a boot splash, the UI presents a scrolling menu navigated with the four
-buttons (Up / Down / Select / Back):
+After a boot splash the player opens straight to **Now Playing**. The four
+buttons (Up / Down / Select / Back) are interrupt-driven, and **holding Select**
+opens the menu from any playback screen.
 
-- **Now Playing** – scrolling title, state, volume, and a progress bar. Select
-  toggles play/pause; Up/Down skip tracks.
+- **Now Playing** (default screen) – scrolling title, state, volume, and a
+  progress bar. Tap Select to play/pause; Up/Down skip tracks; hold Select to
+  open the menu.
 - **Library** – browse and play tracks found on the SD card.
-- **Sync (WiFi)** – trigger a manifest sync on demand.
 - **Volume** – adjust output level in 5% steps.
-- **WiFi Settings** – SSID, connection status, IP address, sync status.
-- **Bluetooth** – on/off toggle (A2DP streaming is a planned feature).
+- **WiFi** – settings hub (see below).
+- **Bluetooth** – settings hub (see below).
 - **Info** – firmware version, free heap, track count, uptime.
+
+In the menu, Back returns to Now Playing.
+
+### WiFi settings
+
+A small hub showing the current SSID, connection state and IP, with two actions:
+
+- **Scan networks** – scans for nearby APs and lists them by signal strength
+  (a leading `#` marks a secured network). Select one to join it; secured
+  networks open an on-screen keyboard (Up/Down pick a character, Select adds it,
+  Back deletes, **hold Select** to confirm and connect). Credentials are saved
+  to NVS and reused on the next boot.
+- **Sync now** – trigger a manifest sync on demand.
+
+### Bluetooth settings
+
+The hub shows the remembered device and live connection status, with two actions:
+
+- **Bluetooth: ON/OFF** – powers the Bluetooth stack up or down. Turning it on
+  automatically reconnects to the remembered device.
+- **Scan devices** – runs a GAP inquiry and lists nearby devices; select one to
+  remember it and connect. Pairing uses "just works" SSP (no keypad needed).
+
+Once a sink is connected, decoded audio is routed over **A2DP** to the speaker
+or headphones instead of the local I2S amplifier; disconnecting (or turning
+Bluetooth off) restores local output automatically.
+
+> Bluetooth requires classic BT + A2DP enabled in `menuconfig` (already set in
+> `sdkconfig.defaults`) and a 4 MB flash module. The A2DP source streams
+> 44.1 kHz 16-bit stereo, matching the backend's MP3 output.
 
 ---
 

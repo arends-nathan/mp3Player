@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "wifi_download.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -17,6 +19,15 @@ typedef enum {
     SYNC_DONE,
     SYNC_FAILED,
 } sync_status_t;
+
+/**
+ * @brief Progress of an on-demand WiFi network scan.
+ */
+typedef enum {
+    WIFI_SCAN_IDLE,
+    WIFI_SCAN_RUNNING,
+    WIFI_SCAN_DONE,
+} wifi_scan_state_t;
 
 /**
  * @brief Start the background networking task.
@@ -52,6 +63,33 @@ const char *sync_manager_ssid(void);
  * Writes "---" when no address is assigned.
  */
 void sync_manager_get_ip(char *buf, size_t len);
+
+// ---------------------------------------------------------------------------
+// WiFi settings (scan + connect). All radio work runs on the network task.
+// ---------------------------------------------------------------------------
+
+/** @brief Queue a WiFi network scan (ignored if one is already running). */
+void sync_manager_request_scan(void);
+
+/** @brief Progress of the most recent scan. */
+wifi_scan_state_t sync_manager_scan_state(void);
+
+/** @brief Number of access points found by the last scan. */
+int sync_manager_scan_count(void);
+
+/**
+ * @brief Access an access point from the last scan.
+ * @return Pointer to the entry, or NULL if @p index is out of range.
+ */
+const wifi_ap_info_t *sync_manager_scan_ap(int index);
+
+/**
+ * @brief Connect to a network and persist the credentials.
+ *
+ * The connection attempt and NVS save happen on the network task; on success a
+ * manifest sync is triggered automatically.
+ */
+void sync_manager_connect(const char *ssid, const char *password);
 
 #ifdef __cplusplus
 }

@@ -16,3 +16,19 @@ CONFIG_FATFS_MAX_LFN=255
 
 # Give the main task a little extra stack for the UI/init path.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=5120
+
+# Bluetooth: classic BT + Bluedroid, used by the Bluetooth settings screen to
+# discover nearby devices and stream audio to a speaker/headphones over A2DP.
+# BLE is left off to save RAM (we only need classic).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=y
+CONFIG_BT_CLASSIC_ENABLED=y
+CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y
+CONFIG_BT_GAP_BT_ENABLED=y
+# A2DP source: stream decoded PCM out to a Bluetooth audio sink. SSP enables
+# "just works" pairing without a keypad on the device.
+CONFIG_BT_A2DP_ENABLE=y
+CONFIG_BT_SSP_ENABLED=y
+
+# WiFi + Bluetooth coexistence: both radios share the 2.4 GHz front end.
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
