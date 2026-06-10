@@ -1,0 +1,22 @@
+menu "Audio Driver Configuration"
+
+    config AUDIO_I2S_BCLK_PIN
+        int "I2S bit clock (BCLK) GPIO"
+        default 27
+        help
+            GPIO connected to the BCLK/SCK pin of the I2S DAC/amplifier
+            (e.g. MAX98357A). Must not collide with the OLED I2C bus (21/22).
+
+    config AUDIO_I2S_LRCLK_PIN
+        int "I2S word select (LRCLK/WS) GPIO"
+        default 26
+        help
+            GPIO connected to the LRC/WS pin of the I2S amplifier.
+
+    config AUDIO_I2S_DOUT_PIN
+        int "I2S data out (DIN) GPIO"
+        default 25
+        help
+            GPIO connected to the DIN/SD data input of the I2S amplifier.
+
+endmenu

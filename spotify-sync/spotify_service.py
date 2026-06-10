@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from collections import Counter
 from typing import Iterable, List, Optional
 from urllib.parse import parse_qs, urlparse
@@ -8,6 +9,62 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_auth_code(redirected_value, redirect_uri):
+    """Pull the OAuth ``code`` out of either a full redirect URL or a raw code."""
+    redirected_value = (redirected_value or "").strip()
+    if not redirected_value:
+        return None
+    parsed_url = urlparse(redirected_value)
+    auth_code = parse_qs(parsed_url.query).get("code", [None])[0]
+    if not auth_code and redirected_value != redirect_uri:
+        auth_code = redirected_value
+    return auth_code
+
+
+def _resolve_authorization_code(auth_manager, redirect_uri):
+    """Obtain an authorization code without blocking unattended (Docker) runs.
+
+    Resolution order:
+      1. SPOTIFY_AUTH_RESPONSE / SPOTIFY_AUTH_CODE environment variables.
+      2. Interactive ``input()`` prompt, but only when stdin is an actual TTY.
+
+    In a non-interactive container with no env var supplied we fail fast with a
+    clear, actionable error instead of hanging forever on ``input()``.
+    """
+    auth_url = auth_manager.get_authorize_url()
+    logger.info("[Spotify] Open this URL in your browser and approve access:")
+    logger.info("[Spotify] %s", auth_url)
+
+    env_value = os.getenv("SPOTIFY_AUTH_RESPONSE") or os.getenv("SPOTIFY_AUTH_CODE")
+    if env_value:
+        auth_code = _extract_auth_code(env_value, redirect_uri)
+        if auth_code:
+            logger.info("[Spotify] Using authorization code from environment.")
+            return auth_code
+        logger.error("[Spotify] SPOTIFY_AUTH_RESPONSE/SPOTIFY_AUTH_CODE did not contain a usable code.")
+
+    if not sys.stdin or not sys.stdin.isatty():
+        raise RuntimeError(
+            "Spotify authorization required but no interactive terminal is available. "
+            "Open the authorization URL above, then provide the resulting code via the "
+            "SPOTIFY_AUTH_RESPONSE environment variable (the full redirect URL or the raw "
+            "code) and re-run."
+        )
+
+    auth_code = None
+    while not auth_code:
+        redirected_value = input(
+            "[Spotify] Paste the full redirected URL after approval, or paste the code itself: "
+        )
+        auth_code = _extract_auth_code(redirected_value, redirect_uri)
+        if not auth_code:
+            logger.error(
+                "[Spotify] No authorization code found. The value must look like %s?code=...",
+                redirect_uri,
+            )
+    return auth_code
 
 
 def create_spotify_client(client_id, client_secret, redirect_uri):
@@ -32,23 +89,7 @@ def create_spotify_client(client_id, client_secret, redirect_uri):
             auth_manager.refresh_access_token(cached_token["refresh_token"])
     else:
         logger.info("[Spotify] No cached token found.")
-        auth_url = auth_manager.get_authorize_url()
-        logger.info("[Spotify] Open this URL in your browser and approve access:")
-        logger.info("[Spotify] %s", auth_url)
-        auth_code = None
-        while not auth_code:
-            redirected_value = input(
-                "[Spotify] Paste the full redirected URL after approval, or paste the code itself: "
-            ).strip()
-            parsed_url = urlparse(redirected_value)
-            auth_code = parse_qs(parsed_url.query).get("code", [None])[0]
-            if not auth_code and redirected_value and redirected_value != redirect_uri:
-                auth_code = redirected_value
-            if not auth_code:
-                logger.error(
-                    "[Spotify] No authorization code found. The value must look like %s?code=...",
-                    redirect_uri,
-                )
+        auth_code = _resolve_authorization_code(auth_manager, redirect_uri)
         logger.info("[Spotify] Exchanging authorization code for an access token...")
         auth_manager.get_access_token(code=auth_code, as_dict=True, check_cache=False)
 

@@ -1,0 +1,18 @@
+# Project-wide default configuration. Regenerate sdkconfig by deleting it and
+# running `idf.py reconfigure` (or any build) so these defaults are applied.
+
+# Use a custom partition table with a larger app partition for the MP3 decoder
+# + WiFi stack. Music is stored on an external SPI SD card (FAT), not in flash.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# HTTPS certificate bundle is required by the manifest/file downloader.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# Long filenames on the SD card's FAT filesystem (track titles can be long).
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+
+# Give the main task a little extra stack for the UI/init path.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=5120

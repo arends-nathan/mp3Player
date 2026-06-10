@@ -1,3 +1,4 @@
+import glob
 import logging
 import os
 import shutil
@@ -6,6 +7,29 @@ from pathlib import Path
 from yt_dlp import YoutubeDL
 
 logger = logging.getLogger(__name__)
+
+
+def _find_winget_ffmpeg():
+    """Search the current user's WinGet package store for a bundled FFmpeg build.
+
+    Uses the LOCALAPPDATA environment variable (not a hardcoded username) so it
+    resolves correctly for whoever is actually running the process.
+    """
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if not local_app_data:
+        return None
+
+    # WinGet installs FFmpeg under a versioned folder, so glob across versions.
+    search_pattern = os.path.join(
+        local_app_data,
+        "Microsoft", "WinGet", "Packages",
+        "*FFmpeg*", "*", "bin", "ffmpeg.exe",
+    )
+    for match in glob.glob(search_pattern):
+        if os.path.isfile(match):
+            return os.path.dirname(match)
+
+    return None
 
 
 def resolve_ffmpeg_location(configured_location=None):
@@ -17,15 +41,7 @@ def resolve_ffmpeg_location(configured_location=None):
     if ffmpeg_path and ffprobe_path:
         return os.path.dirname(ffmpeg_path)
 
-    winget_location = (
-        r"C:\Users\natea\AppData\Local\Microsoft\WinGet\Packages"
-        r"\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe"
-        r"\ffmpeg-8.1.1-full_build\bin"
-    )
-    if os.path.exists(os.path.join(winget_location, "ffmpeg.exe")):
-        return winget_location
-
-    return None
+    return _find_winget_ffmpeg()
 
 
 def download_mp3_from_query(query, output_folder, ffmpeg_location=None):

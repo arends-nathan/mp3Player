@@ -11,4 +11,19 @@ config ESP_WIFI_PASSWORD
     default "mypassword"
     help
 	WiFi password (WPA or WPA2) for the example to use.
+
+config SYNC_BACKEND_URL
+    string "MP3 sync backend base URL"
+    default "http://192.168.1.50:8000"
+    help
+	Base URL of the spotify-sync HTTP API (no trailing slash). The device
+	fetches "<url>/manifest" and downloads new tracks from "<url>/files/<name>".
+
+config SYNC_LOCAL_DIR
+    string "Local music directory"
+    default "/sdcard"
+    help
+	Mount point of the SD card where downloaded MP3s are stored and played
+	from. The card is accessed over SPI.
 endmenu
+
