@@ -22,10 +22,10 @@
 #define CONFIG_SYNC_BACKEND_URL "http://192.168.1.50:8000"
 #endif
 #ifndef CONFIG_ESP_WIFI_SSID
-#define CONFIG_ESP_WIFI_SSID "myssid"
+#error "WiFi SSID not configured. Please configure it in menuconfig"
 #endif
 #ifndef CONFIG_ESP_WIFI_PASSWORD
-#define CONFIG_ESP_WIFI_PASSWORD "mypassword"
+#error "WiFi password not configured. Please configure it in menuconfig"
 #endif
 
 static const char *TAG = "AURASYNC";
@@ -47,9 +47,11 @@ void app_main(void) {
         ESP_LOGE(TAG, "Audio driver failed to initialize");
     }
 
-    // Background networking: WiFi association + manifest sync.
+    // Background networking: WiFi association + manifest sync. Use the actual
+    // mount point returned by the music library (handles SPIFFS fallback).
+    const char *mount = music_library_get_mount_point();
     sync_manager_start(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD,
-                       CONFIG_SYNC_BACKEND_URL, CONFIG_SYNC_LOCAL_DIR);
+                       CONFIG_SYNC_BACKEND_URL, mount ? mount : CONFIG_SYNC_LOCAL_DIR);
 
     // Display + menu UI (rendering task pinned to core 1).
     ui_init(I2C_SDA_PIN, I2C_SCL_PIN);

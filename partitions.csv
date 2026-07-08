@@ -3,4 +3,5 @@
 # needed here. The app partition is enlarged for the MP3 decoder + WiFi stack.
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 2M,
+factory,  app,  factory, 0x10000, 0x2F0000,
+spiffs,   data, spiffs,  0x300000, 0x100000,

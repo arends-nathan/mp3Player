@@ -171,6 +171,8 @@ static void play_file(const char *filepath) {
     char title[AUDIO_TITLE_MAX_LEN];
     derive_title(filepath, title, sizeof(title));
 
+    ESP_LOGI(TAG, "Playback request received: %s", filepath);
+
     FILE *fp = fopen(filepath, "rb");
     if (!fp) {
         ESP_LOGE(TAG, "Could not open file: %s", filepath);
@@ -181,6 +183,7 @@ static void play_file(const char *filepath) {
     fseek(fp, 0, SEEK_END);
     long file_size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
+    ESP_LOGI(TAG, "Opened file: %s (%ld bytes)", filepath, file_size);
 
     HMP3Decoder decoder = MP3InitDecoder();
     uint8_t *input_buf = malloc(MP3_INPUT_BUFFER_SIZE);
@@ -195,6 +198,7 @@ static void play_file(const char *filepath) {
     status_set_track(title, 0);
     status_set_state(AUDIO_STATE_PLAYING);
     ESP_LOGI(TAG, "Playing: %s", title);
+    ESP_LOGI(TAG, "Decoder started for %s", title);
 
     int bytes_in_buffer = 0;
     uint8_t *read_ptr = input_buf;
@@ -257,6 +261,8 @@ static void play_file(const char *filepath) {
             uint32_t total = estimate_total_seconds(file_size, frame.bitrate);
             status_set_track(title, total);
             total_known = true;
+            ESP_LOGI(TAG, "First MP3 frame: rate=%d Hz bitrate=%d bps channels=%d outputSamps=%d",
+                     frame.samprate, frame.bitrate, frame.nChans, frame.outputSamps);
         }
 
         apply_sample_rate(frame.samprate);
@@ -381,6 +387,8 @@ esp_err_t audio_player_play(const char *filepath) {
     if (!filepath || !s_cmd_queue) {
         return ESP_ERR_INVALID_ARG;
     }
+
+    ESP_LOGI(TAG, "Queueing play command for: %s", filepath);
 
     // Cancel any current playback first so the task is free to pick up the new
     // track promptly.
