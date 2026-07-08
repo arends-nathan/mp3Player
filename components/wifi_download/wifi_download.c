@@ -16,6 +16,10 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 
+// Enable to only download the first file from the manifest and exit the
+// sync loop. Useful for quick test flashes when validating storage/networking.
+#define TEST_DOWNLOAD_ONE
+
 static const char *TAG = "NET_DOWNLOADER";
 #define DOWNLOAD_BUFFER_SIZE 1024
 
@@ -37,11 +41,22 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_wifi_connected = false;
+        wifi_event_sta_disconnected_t *dis = (wifi_event_sta_disconnected_t *)event_data;
+        ESP_LOGW(TAG, "WiFi disconnected, reason: %d", dis ? dis->reason : -1);
+
         if (s_retry_count < WIFI_MAX_RETRY) {
             esp_wifi_connect();
             s_retry_count++;
             ESP_LOGW(TAG, "Retrying WiFi connection (%d/%d)", s_retry_count, WIFI_MAX_RETRY);
         } else {
+            ESP_LOGW(TAG, "WiFi retries exhausted; scheduling scan task for diagnostics");
+            // Spawn a short-lived task to perform the scan outside of the event handler
+            // to avoid blocking or re-entrancy issues in the event loop.
+            extern void wifi_diagnostic_scan_task(void *arg);
+            if (xTaskCreate(&wifi_diagnostic_scan_task, "wifi_diag_scan", 4096, NULL, 5, NULL) != pdPASS) {
+                ESP_LOGW(TAG, "Failed to create wifi_diag_scan task");
+            }
+
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -267,7 +282,24 @@ esp_err_t download_mp3_from_api(const char *api_url, const char *output_file_pat
 
     FILE *f = fopen(output_file_path, "wb");
     if (f == NULL) {
-        ESP_LOGE(TAG, "Failed to open target storage path: %s", output_file_path);
+        int errnum = errno;
+        ESP_LOGE(TAG, "Failed to open target storage path: %s (errno=%d: %s)",
+                 output_file_path, errnum, strerror(errnum));
+        // Check whether the parent directory exists for diagnostic purposes
+        char dirbuf[256];
+        strncpy(dirbuf, output_file_path, sizeof(dirbuf) - 1);
+        dirbuf[sizeof(dirbuf) - 1] = '\0';
+        char *p = strrchr(dirbuf, '/');
+        if (p) {
+            *p = '\0';
+            struct stat st;
+            if (stat(dirbuf, &st) == 0) {
+                ESP_LOGW(TAG, "Parent directory exists: %s", dirbuf);
+            } else {
+                ESP_LOGW(TAG, "Parent directory missing: %s (stat errno=%d: %s)",
+                        dirbuf, errno, strerror(errno));
+            }
+        }
         free(buffer);
         return ESP_FAIL;
     }
@@ -373,6 +405,21 @@ static bool local_file_matches(const char *path, long expected_size) {
     return (long)st.st_size == expected_size;
 }
 
+static void make_storage_filename(int index, const char *source_name, char *out, size_t out_len) {
+    if (!out || out_len == 0) {
+        return;
+    }
+
+    const char *ext = ".mp3";
+    const char *dot = source_name ? strrchr(source_name, '.') : NULL;
+    if (dot && dot[1] != '\0' && strlen(dot) <= 5) {
+        ext = dot;
+    }
+
+    // Short generated names keep SPIFFS happy and are stable across syncs.
+    snprintf(out, out_len, "song_%04d%s", index, ext);
+}
+
 esp_err_t wifi_sync_from_manifest(const char *base_url, const char *dest_dir, int *out_downloaded) {
     if (!base_url || !dest_dir) {
         return ESP_ERR_INVALID_ARG;
@@ -426,6 +473,13 @@ esp_err_t wifi_sync_from_manifest(const char *base_url, const char *dest_dir, in
 
     int downloaded = 0;
     cJSON *entry = NULL;
+    int file_index = 0;
+    // For quick testing during development: define TEST_DOWNLOAD_ONE to only
+    // attempt the very first file from the manifest and then stop. This is
+    // useful to validate a single download path without syncing the whole
+    // library. Rebuild/flash to enable.
+#ifdef TEST_DOWNLOAD_ONE
+#endif
     cJSON_ArrayForEach(entry, files) {
         cJSON *name = cJSON_GetObjectItem(entry, "name");
         cJSON *url = cJSON_GetObjectItem(entry, "url");
@@ -436,8 +490,11 @@ esp_err_t wifi_sync_from_manifest(const char *base_url, const char *dest_dir, in
 
         long expected_size = cJSON_IsNumber(size) ? (long)size->valuedouble : -1;
 
+        char safe_name[32];
+        make_storage_filename(file_index, name->valuestring, safe_name, sizeof(safe_name));
+
         char local_path[300];
-        snprintf(local_path, sizeof(local_path), "%s/%s", dest_dir, name->valuestring);
+        snprintf(local_path, sizeof(local_path), "%s/%s", dest_dir, safe_name);
 
         if (expected_size >= 0 && local_file_matches(local_path, expected_size)) {
             ESP_LOGI(TAG, "Up to date: %s", name->valuestring);
@@ -453,6 +510,10 @@ esp_err_t wifi_sync_from_manifest(const char *base_url, const char *dest_dir, in
         } else {
             ESP_LOGE(TAG, "Download failed: %s", name->valuestring);
         }
+#ifdef TEST_DOWNLOAD_ONE
+        break;
+#endif
+    file_index++;
     }
 
     cJSON_Delete(root);
@@ -461,4 +522,34 @@ esp_err_t wifi_sync_from_manifest(const char *base_url, const char *dest_dir, in
         *out_downloaded = downloaded;
     }
     return ESP_OK;
+}
+
+// Short-lived task that performs a blocking WiFi scan and logs results for diagnostics.
+void wifi_diagnostic_scan_task(void *arg) {
+    (void)arg;
+    wifi_scan_config_t scan_cfg = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = true
+    };
+    esp_err_t sc = esp_wifi_scan_start(&scan_cfg, true);
+    if (sc == ESP_OK) {
+        uint16_t ap_count = 32;
+        wifi_ap_record_t ap_records[32];
+        esp_err_t g = esp_wifi_scan_get_ap_records(&ap_count, ap_records);
+        if (g == ESP_OK) {
+            ESP_LOGI(TAG, "WiFi scan found %d AP(s):", ap_count);
+            for (int i = 0; i < ap_count; i++) {
+                ESP_LOGI(TAG, "  AP[%d]: '%s' chan=%d rssi=%d auth=%d", i,
+                         ap_records[i].ssid, ap_records[i].primary,
+                         ap_records[i].rssi, ap_records[i].authmode);
+            }
+        } else {
+            ESP_LOGW(TAG, "Failed to get scan records: %d", g);
+        }
+    } else {
+        ESP_LOGW(TAG, "WiFi scan_start failed: %d", sc);
+    }
+    vTaskDelete(NULL);
 }

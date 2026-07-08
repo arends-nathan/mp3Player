@@ -47,6 +47,9 @@ void music_library_play(int index);
  */
 void music_library_play_relative(int delta);
 
+/** @brief Returns the current mount point used by the music library (eg "/sdcard" or "/spiffs"). */
+const char *music_library_get_mount_point(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -24,10 +24,10 @@
 #define CONFIG_SYNC_BACKEND_URL "http://192.168.1.50:8000"
 #endif
 #ifndef CONFIG_ESP_WIFI_SSID
-#define CONFIG_ESP_WIFI_SSID "myssid"
+#error "WiFi SSID not configured. Please configure it in menuconfig"
 #endif
 #ifndef CONFIG_ESP_WIFI_PASSWORD
-#define CONFIG_ESP_WIFI_PASSWORD "mypassword"
+#error "WiFi password not configured. Please configure it in menuconfig"
 #endif
 
 static const char *TAG = "AURASYNC";

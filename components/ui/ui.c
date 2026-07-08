@@ -12,6 +12,7 @@
 
 #include "u8g2_esp32_hal.h"
 #include "u8g2.h"
+#include "driver/i2c.h"
 
 #include "audio_driver.h"
 #include "buttons.h"
@@ -256,6 +257,8 @@ static void render_library(u8g2_t *u) {
     u8g2_ClearBuffer(u);
     draw_list(u, "LIBRARY", music_library_count(), library_cursor,
               &library_scroll_top, library_label, NULL);
+    u8g2_SetFont(u, u8g2_font_4x6_tf);
+    u8g2_DrawStr(u, 4, 62, "SEL play  BACK menu");
     u8g2_SendBuffer(u);
 }
 
@@ -696,6 +699,43 @@ static void ui_task(void *pvParameters) {
 // ===========================================================================
 // Public API
 // ===========================================================================
+// Quick I2C scanner used at startup to detect device addresses.
+// Returns first found 7-bit address, or 0 if none found.
+static int i2c_scan_test(int sda, int scl) {
+    i2c_port_t port = I2C_MASTER_NUM;
+    i2c_config_t conf = {0};
+    conf.mode = I2C_MODE_MASTER;
+    conf.sda_io_num = sda;
+    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+    conf.scl_io_num = scl;
+    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+    conf.master.clk_speed = 100000;
+    i2c_param_config(port, &conf);
+    esp_err_t rc = i2c_driver_install(port, conf.mode, 0, 0, 0);
+    if (rc != ESP_OK) {
+        ESP_LOGE(TAG, "I2C scan: driver_install failed: %d", rc);
+        return 0;
+    }
+
+    ESP_LOGI(TAG, "I2C scan on SDA=%d SCL=%d", sda, scl);
+    int found = 0;
+    for (int addr = 1; addr < 127; addr++) {
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
+        i2c_master_stop(cmd);
+        esp_err_t r = i2c_master_cmd_begin(port, cmd, pdMS_TO_TICKS(50));
+        i2c_cmd_link_delete(cmd);
+        if (r == ESP_OK) {
+            ESP_LOGI(TAG, "I2C device found at 0x%02X", addr);
+            found = addr;
+            break; // return the first device we find
+        }
+    }
+    i2c_driver_delete(port);
+    return found;
+}
+
 void ui_init(int sda_pin, int scl_pin) {
     ESP_LOGI(TAG, "Initializing U8g2 Hardware Abstraction Layer...");
 
@@ -704,9 +744,19 @@ void ui_init(int sda_pin, int scl_pin) {
     hal.bus.i2c.scl = scl_pin;
     u8g2_esp32_hal_init(hal);
 
+    // Run a quick I2C bus scan to detect attached devices and choose address.
+    int found_addr = i2c_scan_test(sda_pin, scl_pin);
+
     u8g2_Setup_ssd1306_i2c_128x64_noname_f(&s_u8g2, U8G2_R0,
                                            u8g2_esp32_i2c_byte_cb,
                                            u8g2_esp32_gpio_and_delay_cb);
+    if (found_addr > 0) {
+        ESP_LOGI(TAG, "Using detected I2C address 0x%02X", found_addr);
+        u8g2_SetI2CAddress(&s_u8g2, found_addr);
+    } else {
+        ESP_LOGI(TAG, "No I2C device found during scan; defaulting to 0x3C");
+        u8g2_SetI2CAddress(&s_u8g2, 0x3C);
+    }
     u8g2_InitDisplay(&s_u8g2);
     u8g2_SetPowerSave(&s_u8g2, 0);
 }
