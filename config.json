@@ -1,0 +1,8 @@
+{
+  "spotify_client_id": "1e168b5f331a4e6e8c17f4d4a8821bd3",
+  "spotify_client_secret": "ef71160dce4d481c9f6613acf162dc3f",
+  "spotify_redirect_uri": "http://127.0.0.1:8888/callback",
+  "playlist_id": "37i9dQZF1FwVUu5NFvSCMo",
+  "output_dir": "./sync_folder",
+  "ffmpeg_location": "C:\\Users\\natea\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1.1-full_build\\bin"
+}
